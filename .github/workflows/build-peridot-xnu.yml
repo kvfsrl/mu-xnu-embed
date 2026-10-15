@@ -18,6 +18,10 @@ on:
         description: Ref of THIS repo to build the loader from
         required: true
         default: main
+      do_jump:
+        description: "1 = jump into XNU, 0 = dry-run (log only, return to BDS)"
+        required: true
+        default: "1"
 
 jobs:
   build:
@@ -66,10 +70,10 @@ jobs:
           print("kernel.bin: Mach-O 64 OK")
           PY
 
-      - name: Build XNU loader (DO_JUMP=1)
+      - name: Build XNU loader
         run: |
           cd embed/efi-loader
-          DO_JUMP=1 OUT=BOOTAA64.EFI ./build.sh
+          DO_JUMP=${{ inputs.do_jump }} OUT=BOOTAA64.EFI ./build.sh
           cp BOOTAA64.EFI "$GITHUB_WORKSPACE/BOOTAA64.EFI"
 
       - name: Embed loader + kernel into Mu-Silicium
@@ -93,6 +97,6 @@ jobs:
       - name: Upload image
         uses: actions/upload-artifact@v4
         with:
-          name: Mu-peridot-xnu
+          name: Mu-peridot-xnu-jump${{ inputs.do_jump }}
           path: out/
           if-no-files-found: error
