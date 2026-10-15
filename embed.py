@@ -56,24 +56,24 @@ LaunchXnuLoader (
   VOID
   )
 {
-  EFI_STATUS                Status;
-  EFI_DEVICE_PATH_PROTOCOL *DevicePath;
-  FVFILE_DEVICE_PATH       *FvFile;
-  EFI_HANDLE                ImageHandle;
-  UINTN                     Size;
+  EFI_STATUS                             Status;
+  EFI_DEVICE_PATH_PROTOCOL              *DevicePath;
+  MEDIA_FW_VOL_FILEPATH_DEVICE_PATH     *FvFile;
+  EFI_HANDLE                             ImageHandle;
+  UINTN                                  Size;
 
-  Size       = sizeof (FVFILE_DEVICE_PATH) + sizeof (EFI_DEVICE_PATH_PROTOCOL);
+  Size       = sizeof (MEDIA_FW_VOL_FILEPATH_DEVICE_PATH) + sizeof (EFI_DEVICE_PATH_PROTOCOL);
   DevicePath = AllocateZeroPool (Size);
   if (DevicePath == NULL) {
     return;
   }
 
-  FvFile                 = (FVFILE_DEVICE_PATH *)DevicePath;
-  FvFile->Header.Type    = MESSAGING_DEVICE_PATH;
-  FvFile->Header.SubType = MSG_FV_FILEPATH_DP;
-  SetDevicePathNodeLength (&FvFile->Header, sizeof (FVFILE_DEVICE_PATH));
-  CopyMem (&FvFile->NameGuid, &gXnuLoaderFileGuid, sizeof (EFI_GUID));
-  SetDevicePathEndNode ((EFI_DEVICE_PATH_PROTOCOL *)((UINT8 *)DevicePath + sizeof (FVFILE_DEVICE_PATH)));
+  FvFile                 = (MEDIA_FW_VOL_FILEPATH_DEVICE_PATH *)DevicePath;
+  FvFile->Header.Type    = MEDIA_DEVICE_PATH;
+  FvFile->Header.SubType = MEDIA_PIWG_FW_FILE_DP;
+  SetDevicePathNodeLength (&FvFile->Header, sizeof (MEDIA_FW_VOL_FILEPATH_DEVICE_PATH));
+  CopyMem (&FvFile->FvFileName, &gXnuLoaderFileGuid, sizeof (EFI_GUID));
+  SetDevicePathEndNode ((EFI_DEVICE_PATH_PROTOCOL *)((UINT8 *)DevicePath + sizeof (MEDIA_FW_VOL_FILEPATH_DEVICE_PATH)));
 
   DEBUG ((DEBUG_INFO, "XNU: launching embedded loader (FvFile %g)\\n", &gXnuLoaderFileGuid));
 
