@@ -1,0 +1,2 @@
+efi-loader/*.o
+efi-loader/*.EFI
