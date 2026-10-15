@@ -158,9 +158,50 @@ typedef struct _EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
 #define EfiLoaderData 2
 #define EFI_FILE_MODE_READ 0x0000000000000001ULL
 
+/* ---- Graphics Output Protocol (minimal, for a visible "I ran" beacon) ------ */
+typedef struct {
+    UINT32 Red;
+    UINT32 Green;
+    UINT32 Blue;
+    UINT32 Reserved;
+} EFI_GRAPHICS_OUTPUT_BLT_PIXEL;
+
+typedef struct {
+    UINT32 Version;
+    UINT32 HorizontalResolution;
+    UINT32 VerticalResolution;
+    UINT32 PixelFormat;
+    UINT32 PixelInformation[4];
+    UINT32 PixelsPerScanLine;
+} EFI_GRAPHICS_OUTPUT_MODE_INFORMATION;
+
+typedef struct {
+    UINT32 MaxMode;
+    UINT32 Mode;
+    EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *Info;
+    UINTN  SizeOfInfo;
+    EFI_PHYSICAL_ADDRESS FrameBufferBase;
+    UINTN  FrameBufferSize;
+} EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE;
+
+typedef struct _EFI_GRAPHICS_OUTPUT_PROTOCOL {
+    VOID *QueryMode;
+    VOID *SetMode;
+    EFI_STATUS (*Blt)(struct _EFI_GRAPHICS_OUTPUT_PROTOCOL *This,
+                      EFI_GRAPHICS_OUTPUT_BLT_PIXEL *BltBuffer,
+                      UINT32 BltOperation,
+                      UINTN SourceX, UINTN SourceY,
+                      UINTN DestinationX, UINTN DestinationY,
+                      UINTN Width, UINTN Height, UINTN Delta);
+    EFI_GRAPHICS_OUTPUT_PROTOCOL_MODE *Mode;
+} EFI_GRAPHICS_OUTPUT_PROTOCOL;
+
+#define EfiBltVideoFill 1
+
 /* Standard GUIDs */
 static EFI_GUID gEfiLoadedImageProtocolGuid = { 0x5b1b31a1, 0x9562, 0x11d2, { 0x8e, 0x3f, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b } };
 static EFI_GUID gEfiSimpleFileSystemProtocolGuid = { 0x964e5b22, 0x6459, 0x11d2, { 0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b } };
 static EFI_GUID gEfiFileInfoGuid = { 0x09576e92, 0x6d3f, 0x11d2, { 0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b } };
+static EFI_GUID gEfiGraphicsOutputProtocolGuid = { 0x9042a9de, 0x23dc, 0x4a38, { 0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a } };
 
 #endif /* EFI_H */

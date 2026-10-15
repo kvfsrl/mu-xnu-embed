@@ -50,6 +50,8 @@ BOOTMGR_FUNC = '''STATIC CONST CHAR8 *ComboMessage = "[Volume Up] Boot Manager";
 //
 STATIC EFI_GUID gXnuLoaderFileGuid = { 0x7A3B1C2D, 0x4E5F, 0x4061, { 0x82, 0x34, 0x9A, 0x0B, 0x1C, 0x2D, 0x3E, 0x4F } };
 
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mXnuMark = { 0xFF, 0xFF, 0xFF, 0x00 };
+
 STATIC
 VOID
 LaunchXnuLoader (
@@ -62,10 +64,13 @@ LaunchXnuLoader (
   EFI_HANDLE                             ImageHandle;
   UINTN                                  Size;
 
+  AsciiPrintXY (8, 8, &mXnuMark, NULL, "[XNUHOOK] AfterConsole reached");
+
   Size       = sizeof (MEDIA_FW_VOL_FILEPATH_DEVICE_PATH) + sizeof (EFI_DEVICE_PATH_PROTOCOL);
   DevicePath = AllocateZeroPool (Size);
   if (DevicePath == NULL) {
-    return;
+    AsciiPrintXY (8, 32, &mXnuMark, NULL, "[XNUHOOK] alloc failed");
+    goto Hold;
   }
 
   FvFile                 = (MEDIA_FW_VOL_FILEPATH_DEVICE_PATH *)DevicePath;
@@ -75,20 +80,24 @@ LaunchXnuLoader (
   CopyMem (&FvFile->FvFileName, &gXnuLoaderFileGuid, sizeof (EFI_GUID));
   SetDevicePathEndNode ((EFI_DEVICE_PATH_PROTOCOL *)((UINT8 *)DevicePath + sizeof (MEDIA_FW_VOL_FILEPATH_DEVICE_PATH)));
 
-  DEBUG ((DEBUG_INFO, "XNU: launching embedded loader (FvFile %g)\\n", &gXnuLoaderFileGuid));
-
   Status = gBS->LoadImage (FALSE, gImageHandle, DevicePath, NULL, 0, &ImageHandle);
+  AsciiPrintXY (8, 32, &mXnuMark, NULL, "[XNUHOOK] LoadImage status = %r", Status);
   if (EFI_ERROR (Status)) {
-    DEBUG ((DEBUG_ERROR, "XNU: LoadImage failed: %r\\n", Status));
     FreePool (DevicePath);
-    return;
+    goto Hold;
   }
 
   Status = gBS->StartImage (ImageHandle, NULL, NULL);
-  DEBUG ((DEBUG_INFO, "XNU: loader returned: %r\\n", Status));
+  AsciiPrintXY (8, 56, &mXnuMark, NULL, "[XNUHOOK] StartImage status = %r", Status);
 
   gBS->UnloadImage (ImageHandle);
   FreePool (DevicePath);
+
+Hold:
+  for (;;) {
+    AsciiPrintXY (8, 80, &mXnuMark, NULL, "[XNUHOOK] holding before BDS continues");
+    gBS->Stall (1000000);
+  }
 }
 
 VOID

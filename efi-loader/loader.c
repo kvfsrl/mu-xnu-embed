@@ -75,6 +75,32 @@ static void efi_print_dec(EFI_SYSTEM_TABLE *st, UINT64 v)
     efi_print(st, &out[i]);
 }
 
+/* Draw a full-width colored strip via GOP so we have a visible beacon even if
+ * the text console is not rendered during BDS. line selects the vertical slot. */
+static void efi_beacon(EFI_SYSTEM_TABLE *st, UINTN line, UINT32 r, UINT32 g, UINT32 b)
+{
+    EFI_BOOT_SERVICES *bs = st->BootServices;
+    EFI_GRAPHICS_OUTPUT_PROTOCOL *gop = NULL;
+    EFI_STATUS (*LocateProtocol)(EFI_GUID *, VOID *, VOID **);
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL px;
+    UINTN w, h, y;
+
+    LocateProtocol = (EFI_STATUS (*)(EFI_GUID *, VOID *, VOID **))bs->LocateProtocol;
+    if (EFI_ERR(LocateProtocol(&gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&gop)))
+        return;
+    if (!gop || !gop->Mode || !gop->Mode->Info)
+        return;
+
+    w = gop->Mode->Info->HorizontalResolution;
+    h = gop->Mode->Info->VerticalResolution;
+    if (w == 0)
+        return;
+
+    px.Red = r; px.Green = g; px.Blue = b; px.Reserved = 0;
+    y = (line * 60) % (h > 60 ? h - 60 : 1);
+    gop->Blt(gop, &px, EfiBltVideoFill, 0, 0, 0, y, w, 40, 0);
+}
+
 /* ---- read the whole kernel file into a pool buffer ------------------------- */
 static EFI_STATUS load_kernel_file(EFI_HANDLE image, EFI_SYSTEM_TABLE *st,
                                    VOID **out_buf, UINTN *out_size)
@@ -381,10 +407,12 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st)
     EFI_STATUS s;
 
     efi_print(st, "\r\n[xnuload] Darwin/XNU loader (Mu-Silicium UEFI AArch64)\r\n");
+    efi_beacon(st, 0, 0xFF, 0x00, 0xFF); /* magenta: loader app is running */
 
     efi_print(st, "[xnuload] scanning RAM for appended XNU kernel...\r\n");
     s = find_appended_kernel(st, &img, &img_size);
     if (EFI_ERR(s)) {
+        efi_beacon(st, 1, 0xFF, 0x00, 0x00); /* red: not found by magic */
         efi_print(st, "[xnuload] not found; falling back to \\kernel.bin on ESP\r\n");
         s = load_kernel_file(image, st, &img, &img_size);
         if (EFI_ERR(s)) {
@@ -392,6 +420,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st)
             return s;
         }
     } else {
+        efi_beacon(st, 1, 0x00, 0xFF, 0x00); /* green: appended kernel found */
         efi_print(st, "[xnuload] appended kernel @ ");
         efi_print_hex(st, (UINT64)img);
         efi_print(st, "\r\n");
@@ -455,6 +484,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st)
             if (!EFI_ERR(bs->ExitBootServices(image, map_key))) break;
         }
         efi_print(st, "[xnuload] ExitBootServices done, jumping to XNU _start\r\n");
+        efi_beacon(st, 2, 0xFF, 0xFF, 0x00); /* yellow: about to jump */
         /* x0 = physical address of boot_args (arm64 XNU entry convention). */
         kentry = (void (*)(VOID *))(UINTN)entry;
         kentry((VOID *)ba_phys);
