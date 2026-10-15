@@ -47,7 +47,13 @@ jobs:
             python3 python3-pip python3-venv git
           sudo ln -sf "$(command -v llvm-objcopy)" /usr/local/bin/llvm-objcopy || true
           python3 -m pip install --upgrade pip
-          python3 -m pip install edk2-pytool-library edk2-pytool-extensions coloredlogs
+          python3 -m pip install edk2-pytool-library edk2-pytool-extensions coloredlogs regex
+          if [ -f mu/Mu_Basecore/pip-requirements.txt ]; then
+            python3 -m pip install -r mu/Mu_Basecore/pip-requirements.txt || true
+          fi
+          if [ -f mu/Mu_Basecore/pip-requirements-extras.txt ]; then
+            python3 -m pip install -r mu/Mu_Basecore/pip-requirements-extras.txt || true
+          fi
 
       - name: Fetch kernel.bin
         run: |
