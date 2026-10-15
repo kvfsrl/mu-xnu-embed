@@ -1,2 +1,2 @@
-efi-loader/*.o
-efi-loader/*.EFI
+*.o
+*.EFI
