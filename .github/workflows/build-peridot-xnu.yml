@@ -1,0 +1,91 @@
+name: Build Mu-Silicium + XNU loader (peridot)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mu_repo:
+        description: Mu-Silicium repository
+        required: true
+        default: Project-Silicium/Mu-Silicium
+      mu_ref:
+        description: Mu-Silicium ref (branch/tag/sha)
+        required: true
+        default: main
+      kernel_url:
+        description: Direct URL to kernel.bin (XNU Mach-O, arm64e)
+        required: true
+      embed_ref:
+        description: Ref of THIS repo to build the loader from
+        required: true
+        default: main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout embedding kit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.embed_ref }}
+          path: embed
+
+      - name: Checkout Mu-Silicium (recursive)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.mu_repo }}
+          ref: ${{ inputs.mu_ref }}
+          submodules: recursive
+          path: mu
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential uuid-dev nasm acpica-tools \
+            clang lld llvm gcc-aarch64-linux-gnu \
+            python3 python3-pip python3-venv git
+          sudo ln -sf "$(command -v llvm-objcopy)" /usr/local/bin/llvm-objcopy || true
+          python3 -m pip install --upgrade pip
+          python3 -m pip install edk2-pytool-library edk2-pytool-extensions coloredlogs
+
+      - name: Fetch kernel.bin
+        run: |
+          curl -fL --retry 3 -o kernel.bin "${{ inputs.kernel_url }}"
+          ls -l kernel.bin
+          python3 - <<'PY'
+          d=open("kernel.bin","rb").read(4)
+          assert d==bytes.fromhex("cffaedfe"), f"not a little-endian 64-bit Mach-O: {d.hex()}"
+          print("kernel.bin: Mach-O 64 OK")
+          PY
+
+      - name: Build XNU loader (DO_JUMP=1)
+        run: |
+          cd embed/efi-loader
+          DO_JUMP=1 OUT=BOOTAA64.EFI ./build.sh
+          cp BOOTAA64.EFI "$GITHUB_WORKSPACE/BOOTAA64.EFI"
+
+      - name: Embed loader + kernel into Mu-Silicium
+        run: |
+          bash embed/apply.sh "$GITHUB_WORKSPACE/mu" \
+            "$GITHUB_WORKSPACE/BOOTAA64.EFI" "$GITHUB_WORKSPACE/kernel.bin"
+
+      - name: Build UEFI (peridot)
+        working-directory: mu
+        run: |
+          python3 build_uefi.py -d peridot -c
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p out
+          cp mu/Mu-peridot*.img out/ 2>/dev/null || true
+          cp mu/Mu-peridot*.bin out/ 2>/dev/null || true
+          cp mu/Build/peridotPkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd out/ 2>/dev/null || true
+          ls -lR out
+
+      - name: Upload image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mu-peridot-xnu
+          path: out/
+          if-no-files-found: error
