@@ -44,7 +44,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential uuid-dev nasm acpica-tools \
             clang lld llvm gcc-aarch64-linux-gnu \
-            python3 python3-pip python3-venv git
+            python3 python3-pip python3-venv git \
+            mono-complete libssl-dev
           sudo ln -sf "$(command -v llvm-objcopy)" /usr/local/bin/llvm-objcopy || true
           python3 -m pip install --upgrade pip
           python3 -m pip install edk2-pytool-library edk2-pytool-extensions coloredlogs regex
