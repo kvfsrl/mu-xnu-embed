@@ -11,8 +11,9 @@ What it does (all edits are idempotent):
   4. Hooks PlatformBootManagerLib (BootManager.c) to LoadImage+StartImage it
      by that GUID right after the console is up.
   5. Teaches build_uefi.py to append [pad|XNUKERN1|size|kernel.bin] AFTER the
-     UEFI FD in the Android boot image. BootShim copies only FD_SIZE bytes, so
-     the appended kernel survives in RAM; the loader finds it by magic.
+     UEFI FD in the Android boot image, and patches BootShim.S to copy that tail
+     into a RAM region reserved in MemoryMapLib (XNU_Kernel @ 0xA8000000) so the
+     DXE core never reclaims it. The loader reads it from that fixed address.
 """
 import sys
 import struct  # noqa: F401  (kept for parity with patched build_uefi.py)
@@ -25,6 +26,15 @@ TOML = Path("Resources/Configs/peridot.toml")
 BUILD_UEFI = Path("build_uefi.py")
 BOOTMGR = Path("Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManager.c")
 BOOTMGR_INF = Path("Silicon/Silicium/SiliciumPkg/Library/BootManagerLib/BootManagerLib.inf")
+BOOTSHIM = Path("BootShim/BootShim.S")
+MEMORYMAPLIB = Path("Platforms/Xiaomi/peridotPkg/Library/MemoryMapLib/MemoryMapLib.c")
+
+# Reserved RAM region the appended kernel is handed off into. Must match
+# XNUP_HANDOFF_BASE in efi-loader/loader.c and the hand-written XNU_Kernel entry
+# we add to MemoryMapLib.c below. Carved out of the front of DXE_Heap.
+XNUP_HANDOFF_BASE = 0xA8000000
+XNUP_REGION_SIZE = 0x01000000  # 16 MiB
+XNUP_TAIL_DEST = XNUP_HANDOFF_BASE  # [XNUKERN1|size|kernel] copied here
 
 
 def patch(path: Path, old: str, new: str, label: str):
@@ -218,6 +228,48 @@ def main():
           "  // ExitBootServices + branches to the kernel, so this never returns.\n"
           "  LaunchXnuLoader ();\n}",
           "BootManager.c: call LaunchXnuLoader()")
+
+    print("[*] patching BootShim")
+    tail_size = (16 + kernel.stat().st_size + 15) & ~15
+    # Guarantee the appended [magic|size|kernel] starts exactly FD_SIZE bytes
+    # past the FD (BootShim's copy loop leaves x4 there), i.e. BootShim.bin must
+    # be 16-byte aligned so build_uefi's tail padding is zero.
+    # Flush the literal pool (.ltorg) BEFORE _Payload so no data lands after the
+    # label: build_uefi appends the FD right after BootShim.bin, so _Payload must
+    # be the last byte of BootShim.bin for x1 == FD start.
+    patch(mu / BOOTSHIM,
+          ".text\n.align 4\n\n_Payload:",
+          ".text\n.align 4\n.ltorg\n.p2align 4\n\n_Payload:",
+          "BootShim.S: flush literals + align _Payload to 16")
+    patch(mu / BOOTSHIM,
+          "  subs  x6, x6, #16\n"
+          "  b.ne  _CopyLoop\n"
+          "  ldr   x5, =FD_BASE\n\n"
+          "_Entry:\n"
+          "  br    x5",
+          "  subs  x6, x6, #16\n"
+          "  b.ne  _CopyLoop\n"
+          "  ldr   x5, =FD_BASE\n\n"
+          "  /* Copy the [XNUKERN1|size|kernel] tail appended after the FD (x4 now\n"
+          "     points there) into the reserved XNU region so DXE cannot reclaim\n"
+          "     it. Offsets baked in by embed.py. */\n"
+          f"  ldr   x9,  =0x{XNUP_TAIL_DEST:X}\n"
+          f"  ldr   x10, =0x{tail_size:X}\n\n"
+          "_XnuTailCopy:\n"
+          "  ldp   x2, x3, [x4], #16\n"
+          "  stp   x2, x3, [x9], #16\n"
+          "  subs  x10, x10, #16\n"
+          "  b.ne  _XnuTailCopy\n\n"
+          "_Entry:\n"
+          "  br    x5",
+          "BootShim.S: copy XNU tail to reserved region")
+
+    print("[*] patching MemoryMapLib")
+    patch(mu / MEMORYMAPLIB,
+          '  {"DXE_Heap",            0xA8000000, 0x1BA00000, AddMem, SYS_MEM, SYS_MEM_CAP, Conv,   WRITE_BACK_XN},',
+          f'  {{"XNU_Kernel",          0x{XNUP_HANDOFF_BASE:08X}, 0x{XNUP_REGION_SIZE:08X}, AddMem, SYS_MEM, SYS_MEM_CAP, Reserv, WRITE_BACK_XN}},\n'
+          '  {"DXE_Heap",            0xA9000000, 0x1AA00000, AddMem, SYS_MEM, SYS_MEM_CAP, Conv,   WRITE_BACK_XN},',
+          "MemoryMapLib.c: reserve XNU_Kernel region")
 
     print("[*] done. Now build with:  python3 build_uefi.py -d peridot")
 

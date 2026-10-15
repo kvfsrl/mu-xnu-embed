@@ -304,13 +304,19 @@ static UINT64 dram_top_from_map(EFI_SYSTEM_TABLE *st)
     return top;
 }
 
-/* ---- find a kernel appended after the firmware FD --------------------------- */
-/* Mu-Silicium's BootShim (BootShim.S) copies exactly FD_SIZE bytes from its
- * payload (the FD that follows its code) to FD_BASE, then branches there. So
- * anything appended AFTER the FD in the Android boot image survives untouched
- * in RAM. We append [magic | size | kernel.bin] (see build_uefi.py patch) and
- * scan physical RAM for the magic. MMU maps RAM 1:1 in DXE, so PA == VA. */
-#define XNUP_MAGIC 0x314E52454B554E58ULL /* "XNUKERN1" little-endian */
+/* ---- find the kernel handed off by BootShim -------------------------------- */
+/* Mu-Silicium's BootShim copies its FD payload to FD_BASE and branches there.
+ * We patch BootShim to ALSO copy the tail appended after the FD in the Android
+ * boot image ([magic | size | kernel.bin]) into a RAM region we reserve in the
+ * platform memory map (peridotPkg MemoryMapLib: XNU_Kernel, 16 MiB at
+ * XNUP_HANDOFF_BASE). Because that region is EfiReservedMemoryType the DXE core
+ * never reclaims it, so the kernel is still intact when this runs.
+ *
+ * We deliberately do NOT scan all of RAM: reserved descriptors can point past
+ * the end of physically-backed memory and fault. Instead we read the header at
+ * the fixed hand-off address only. */
+#define XNUP_MAGIC        0x314E52454B554E58ULL /* "XNUKERN1" little-endian */
+#define XNUP_HANDOFF_BASE 0xA8000000ULL         /* keep in sync with embed.py */
 
 typedef struct {
     UINT64 magic;
@@ -320,42 +326,14 @@ typedef struct {
 static EFI_STATUS find_appended_kernel(EFI_SYSTEM_TABLE *st,
                                        VOID **out_buf, UINTN *out_size)
 {
-    EFI_BOOT_SERVICES *bs = st->BootServices;
-    UINTN map_size = 0, map_key = 0, desc_size = 0;
-    UINT32 desc_ver = 0;
-    VOID *map = NULL;
-    UINTN n, i;
-    UINT64 off;
+    xnup_header *h = (xnup_header *)(UINTN)XNUP_HANDOFF_BASE;
 
-    bs->GetMemoryMap(&map_size, NULL, &map_key, &desc_size, &desc_ver);
-    map_size += desc_size * 8;
-    if (EFI_ERR(bs->AllocatePool(EfiLoaderData, map_size, &map)))
-        return 1;
-    if (EFI_ERR(bs->GetMemoryMap(&map_size, map, &map_key, &desc_size, &desc_ver))) {
-        bs->FreePool(map);
-        return 1;
+    (void)st;
+    if (h->magic == XNUP_MAGIC && h->size > 0 && h->size < (256ULL << 20)) {
+        *out_buf  = (VOID *)(UINTN)(XNUP_HANDOFF_BASE + sizeof(xnup_header));
+        *out_size = (UINTN)h->size;
+        return EFI_SUCCESS;
     }
-
-    n = map_size / desc_size;
-    for (i = 0; i < n; i++) {
-        efi_memory_descriptor *d = (efi_memory_descriptor *)((UINT8 *)map + i * desc_size);
-        UINT64 bytes;
-
-        /* scan RAM-backed descriptors; MMIO/port-space (>=11) must be skipped */
-        if (d->Type > 10)
-            continue;
-        bytes = d->NumberOfPages * 4096;
-        for (off = 0; off + 16 <= bytes; off += 16) {
-            xnup_header *h = (xnup_header *)(UINTN)(d->PhysicalStart + off);
-            if (h->magic == XNUP_MAGIC && h->size > 0 && h->size < (256ULL << 20)) {
-                *out_buf = (VOID *)(h + 1);
-                *out_size = (UINTN)h->size;
-                bs->FreePool(map);
-                return EFI_SUCCESS;
-            }
-        }
-    }
-    bs->FreePool(map);
     return 1;
 }
 
@@ -409,7 +387,7 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st)
     efi_print(st, "\r\n[xnuload] Darwin/XNU loader (Mu-Silicium UEFI AArch64)\r\n");
     efi_beacon(st, 0, 0xFF, 0x00, 0xFF); /* magenta: loader app is running */
 
-    efi_print(st, "[xnuload] scanning RAM for appended XNU kernel...\r\n");
+    efi_print(st, "[xnuload] reading XNU kernel from BootShim hand-off...\r\n");
     s = find_appended_kernel(st, &img, &img_size);
     if (EFI_ERR(s)) {
         efi_beacon(st, 1, 0xFF, 0x00, 0x00); /* red: not found by magic */
@@ -478,13 +456,13 @@ EFI_STATUS efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE *st)
             efi_print(st, "[xnuload] no mem for map\r\n");
             return 1;
         }
+        efi_print(st, "[xnuload] ExitBootServices + jump to XNU _start now...\r\n");
+        efi_beacon(st, 2, 0xFF, 0xFF, 0x00); /* yellow: about to jump */
         for (;;) {
             map_size = 0;
             bs->GetMemoryMap(&map_size, map, &map_key, &desc_size, &desc_ver);
             if (!EFI_ERR(bs->ExitBootServices(image, map_key))) break;
         }
-        efi_print(st, "[xnuload] ExitBootServices done, jumping to XNU _start\r\n");
-        efi_beacon(st, 2, 0xFF, 0xFF, 0x00); /* yellow: about to jump */
         /* x0 = physical address of boot_args (arm64 XNU entry convention). */
         kentry = (void (*)(VOID *))(UINTN)entry;
         kentry((VOID *)ba_phys);
