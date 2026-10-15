@@ -58,44 +58,65 @@ LaunchXnuLoader (
   VOID
   )
 {
-  EFI_STATUS                             Status;
-  EFI_DEVICE_PATH_PROTOCOL              *DevicePath;
-  MEDIA_FW_VOL_FILEPATH_DEVICE_PATH     *FvFile;
-  EFI_HANDLE                             ImageHandle;
-  UINTN                                  Size;
+  EFI_STATUS                     Status;
+  EFI_HANDLE                    *Handles;
+  UINTN                          HandleCount;
+  UINTN                          Index;
+  EFI_FIRMWARE_VOLUME2_PROTOCOL *Fv;
+  VOID                          *Buffer;
+  UINTN                          BufferSize;
+  UINT32                         AuthenticationStatus;
+  EFI_HANDLE                     ImageHandle;
 
   AsciiPrintXY (8, 8, &mXnuMark, NULL, "[XNUHOOK] AfterConsole reached");
 
-  Size       = sizeof (MEDIA_FW_VOL_FILEPATH_DEVICE_PATH) + sizeof (EFI_DEVICE_PATH_PROTOCOL);
-  DevicePath = AllocateZeroPool (Size);
-  if (DevicePath == NULL) {
-    AsciiPrintXY (8, 32, &mXnuMark, NULL, "[XNUHOOK] alloc failed");
+  Handles     = NULL;
+  Buffer      = NULL;
+  HandleCount = 0;
+
+  Status = gBS->LocateHandleBuffer (ByProtocol, &gEfiFirmwareVolume2ProtocolGuid, NULL, &HandleCount, &Handles);
+  if (EFI_ERROR (Status)) {
+    AsciiPrintXY (8, 32, &mXnuMark, NULL, "[XNUHOOK] LocateHandleBuffer(FV2) failed");
     goto Hold;
   }
+  AsciiPrintXY (8, 32, &mXnuMark, NULL, "[XNUHOOK] FV2 handles = %d", HandleCount);
 
-  FvFile                 = (MEDIA_FW_VOL_FILEPATH_DEVICE_PATH *)DevicePath;
-  FvFile->Header.Type    = MEDIA_DEVICE_PATH;
-  FvFile->Header.SubType = MEDIA_PIWG_FW_FILE_DP;
-  SetDevicePathNodeLength (&FvFile->Header, sizeof (MEDIA_FW_VOL_FILEPATH_DEVICE_PATH));
-  CopyMem (&FvFile->FvFileName, &gXnuLoaderFileGuid, sizeof (EFI_GUID));
-  SetDevicePathEndNode ((EFI_DEVICE_PATH_PROTOCOL *)((UINT8 *)DevicePath + sizeof (MEDIA_FW_VOL_FILEPATH_DEVICE_PATH)));
+  for (Index = 0; Index < HandleCount; Index++) {
+    Status = gBS->HandleProtocol (Handles[Index], &gEfiFirmwareVolume2ProtocolGuid, (VOID **)&Fv);
+    if (EFI_ERROR (Status)) {
+      continue;
+    }
+    BufferSize           = 0;
+    AuthenticationStatus = 0;
+    Status               = Fv->ReadSection (Fv, &gXnuLoaderFileGuid, EFI_SECTION_PE32, 0, &Buffer, &BufferSize, &AuthenticationStatus);
+    if (!EFI_ERROR (Status) && (Buffer != NULL)) {
+      break;
+    }
+    Buffer = NULL;
+  }
+  gBS->FreePool (Handles);
 
-  Status = gBS->LoadImage (FALSE, gImageHandle, DevicePath, NULL, 0, &ImageHandle);
-  AsciiPrintXY (8, 32, &mXnuMark, NULL, "[XNUHOOK] LoadImage status = %r", Status);
+  if (Buffer == NULL) {
+    AsciiPrintXY (8, 56, &mXnuMark, NULL, "[XNUHOOK] loader PE not found in any FV");
+    goto Hold;
+  }
+  AsciiPrintXY (8, 56, &mXnuMark, NULL, "[XNUHOOK] loader PE %d bytes, LoadImage from buffer", BufferSize);
+
+  Status = gBS->LoadImage (FALSE, gImageHandle, NULL, Buffer, BufferSize, &ImageHandle);
+  AsciiPrintXY (8, 80, &mXnuMark, NULL, "[XNUHOOK] LoadImage from buffer done");
   if (EFI_ERROR (Status)) {
-    FreePool (DevicePath);
+    AsciiPrintXY (8, 104, &mXnuMark, NULL, "[XNUHOOK] LoadImage FAILED");
     goto Hold;
   }
 
   Status = gBS->StartImage (ImageHandle, NULL, NULL);
-  AsciiPrintXY (8, 56, &mXnuMark, NULL, "[XNUHOOK] StartImage status = %r", Status);
+  AsciiPrintXY (8, 104, &mXnuMark, NULL, "[XNUHOOK] StartImage returned");
 
   gBS->UnloadImage (ImageHandle);
-  FreePool (DevicePath);
 
 Hold:
   for (;;) {
-    AsciiPrintXY (8, 80, &mXnuMark, NULL, "[XNUHOOK] holding before BDS continues");
+    AsciiPrintXY (8, 128, &mXnuMark, NULL, "[XNUHOOK] holding before BDS continues");
     gBS->Stall (1000000);
   }
 }
@@ -179,6 +200,8 @@ def main():
           '#include <Configuration/BootDevices.h>\n\n#include "BootManager.h"',
           '#include <Configuration/BootDevices.h>\n\n'
           '#include <Protocol/DevicePath.h>\n'
+          '#include <Protocol/FirmwareVolume2.h>\n'
+          '#include <Pi/PiFirmwareFile.h>\n'
           '#include <Library/DevicePathLib.h>\n'
           '#include <Library/MemoryAllocationLib.h>\n'
           '#include <Library/BaseMemoryLib.h>\n\n'
